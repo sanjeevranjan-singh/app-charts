@@ -191,7 +191,7 @@ mcpTools:
     enabled: true
     name: prometheus-mcp-server
     replicas: 1
-    image: ghcr.io/pab1it0/prometheus-mcp-server:latest
+    image: agentcert/prometheus-mcp-server:latest
     port: 9090
     # Prometheus connection settings (stored in ConfigMap)
     config:

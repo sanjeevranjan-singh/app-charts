@@ -128,6 +128,13 @@ func installChart(config *Config) error {
 		}
 	}
 
+	// Clean up any stuck Helm release before attempting install.
+	// A release stuck in pending-install/pending-upgrade/failed state will cause
+	// "helm upgrade --install" to fail with "another operation in progress".
+	if err := cleanupStuckRelease(config.ReleaseName, config.Namespace); err != nil {
+		log.Printf("Warning: stuck release cleanup failed: %v", err)
+	}
+
 	// Build helm command
 	var args []string
 
@@ -233,6 +240,50 @@ func waitForDeployments(namespace, timeout string) error {
 	}
 
 	log.Printf("All deployments in namespace %s are ready", namespace)
+	return nil
+}
+
+// cleanupStuckRelease checks if a Helm release exists in a broken state
+// (pending-install, pending-upgrade, pending-rollback, or failed) and
+// uninstalls it so that the next "helm upgrade --install" can succeed.
+func cleanupStuckRelease(releaseName, namespace string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Get release status via helm
+	statusCmd := exec.CommandContext(ctx, "helm", "status", releaseName,
+		"-n", namespace, "-o", "json")
+	out, err := statusCmd.Output()
+	if err != nil {
+		// Release doesn't exist — nothing to clean up
+		return nil
+	}
+
+	status := string(out)
+	stuckStates := []string{"pending-install", "pending-upgrade", "pending-rollback", "failed"}
+	isStuck := false
+	for _, state := range stuckStates {
+		if strings.Contains(status, state) {
+			isStuck = true
+			log.Printf("Release %s is stuck in '%s' state, cleaning up...", releaseName, state)
+			break
+		}
+	}
+
+	if !isStuck {
+		return nil
+	}
+
+	log.Printf("Uninstalling stuck release %s in namespace %s", releaseName, namespace)
+	uninstallCmd := exec.CommandContext(ctx, "helm", "uninstall", releaseName,
+		"-n", namespace, "--no-hooks")
+	uninstallCmd.Stdout = os.Stdout
+	uninstallCmd.Stderr = os.Stderr
+	if err := uninstallCmd.Run(); err != nil {
+		return fmt.Errorf("failed to uninstall stuck release %s: %w", releaseName, err)
+	}
+
+	log.Printf("Successfully cleaned up stuck release %s", releaseName)
 	return nil
 }
 
