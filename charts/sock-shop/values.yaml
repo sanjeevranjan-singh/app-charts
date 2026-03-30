@@ -165,6 +165,8 @@ mcpTools:
     image: quay.io/containers/kubernetes_mcp_server:latest
     port: 8081
     args:
+      - "--transport"
+      - "sse"
       - "--port"
       - "8081"
       - "--stateless"
@@ -196,7 +198,7 @@ mcpTools:
     # Prometheus connection settings (stored in ConfigMap)
     config:
       prometheusUrl: ""  # Auto-resolved to http://prometheus.<monitoring-ns>.svc.cluster.local:9090
-      transport: "http"
+      transport: "sse"
       bindHost: "0.0.0.0"
       bindPort: "9090"
       requestTimeout: "30"
