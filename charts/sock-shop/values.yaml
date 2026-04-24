@@ -45,7 +45,7 @@ sockShop:
   carts:
     replicas: 1
     image: weaveworksdemos/carts:0.4.8
-    javaOpts: "-Xms64m -Xmx128m -XX:PermSize=32m -XX:MaxPermSize=64m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
+    javaOpts: "-Xms96m -Xmx256m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
 
   # Carts DB
   cartsDb:
@@ -61,7 +61,7 @@ sockShop:
   orders:
     replicas: 1
     image: weaveworksdemos/orders:0.4.7
-    javaOpts: "-Xms64m -Xmx128m -XX:PermSize=32m -XX:MaxPermSize=64m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
+    javaOpts: "-Xms96m -Xmx256m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
 
   # Orders DB
   ordersDb:
@@ -77,7 +77,7 @@ sockShop:
   shipping:
     replicas: 1
     image: weaveworksdemos/shipping:0.4.8
-    javaOpts: "-Xms64m -Xmx128m -XX:PermSize=32m -XX:MaxPermSize=64m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
+    javaOpts: "-Xms96m -Xmx256m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
 
   # User service
   user:
@@ -165,8 +165,6 @@ mcpTools:
     image: quay.io/containers/kubernetes_mcp_server:latest
     port: 8081
     args:
-      - "--transport"
-      - "sse"
       - "--port"
       - "8081"
       - "--stateless"
