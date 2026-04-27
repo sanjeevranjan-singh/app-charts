@@ -20,7 +20,7 @@ spec:
             - --storage.tsdb.retention.time={{ .Values.monitoring.prometheus.retention }}
             - --config.file=/etc/prometheus/prometheus.yml
           image: {{ .Values.monitoring.prometheus.image }}
-            imagePullPolicy: Always
+          imagePullPolicy: Always
           name: prometheus
           ports:
             - containerPort: 9090
