@@ -17,13 +17,24 @@ const (
 	defaultNamespace  = "default"
 )
 
+// setFlags implements flag.Value to accumulate multiple --set flags.
+// Go's flag package keeps only the last value for a flag; this type
+// appends each occurrence so all --set values are preserved.
+type setFlags []string
+
+func (s *setFlags) String() string { return strings.Join(*s, ",") }
+func (s *setFlags) Set(val string) error {
+	*s = append(*s, val)
+	return nil
+}
+
 type Config struct {
 	FolderName    string
 	ReleaseName   string
 	Namespace     string
 	ChartsPath    string
 	ValuesFile    string
-	SetValues     string
+	SetValues     setFlags // supports multiple --set flags
 	DryRun        bool
 	Wait          bool
 	Timeout       string
@@ -55,7 +66,7 @@ func parseFlags() *Config {
 	flag.StringVar(&config.Namespace, "namespace", defaultNamespace, "Kubernetes namespace to install into")
 	flag.StringVar(&config.ChartsPath, "charts-path", defaultChartsPath, "Base path where charts are located")
 	flag.StringVar(&config.ValuesFile, "values", "", "Path to custom values file")
-	flag.StringVar(&config.SetValues, "set", "", "Set values on command line (key=value,key2=value2)")
+	flag.Var(&config.SetValues, "set", "Set values on command line (can be repeated: --set key=value --set key2=value2)")
 	flag.BoolVar(&config.DryRun, "dry-run", false, "Simulate installation without applying")
 	flag.BoolVar(&config.Wait, "wait", true, "Wait for resources to be ready")
 	flag.StringVar(&config.Timeout, "timeout", "10m", "Timeout for installation")
@@ -129,10 +140,17 @@ func installChart(config *Config) error {
 	}
 
 	// Clean up any stuck Helm release before attempting install.
-	// A release stuck in pending-install/pending-upgrade/failed state will cause
-	// "helm upgrade --install" to fail with "another operation in progress".
 	if err := cleanupStuckRelease(config.ReleaseName, config.Namespace); err != nil {
 		log.Printf("Warning: stuck release cleanup failed: %v", err)
+	}
+
+	// Adopt any pre-existing resources so Helm can manage them on upgrade --install.
+	// Prevents "invalid ownership metadata" errors when resources were left behind
+	// from a previous Helm release purged without deleting the underlying resources.
+	if config.Upgrade {
+		if err := adoptExistingResources(config); err != nil {
+			log.Printf("Warning: failed to adopt existing resources: %v", err)
+		}
 	}
 
 	// Build helm command
@@ -153,11 +171,8 @@ func installChart(config *Config) error {
 		args = append(args, "-f", config.ValuesFile)
 	}
 
-	if config.SetValues != "" {
-		// Parse comma-separated key=value pairs
-		for _, setValue := range strings.Split(config.SetValues, ",") {
-			args = append(args, "--set", setValue)
-		}
+	for _, setValue := range config.SetValues {
+		args = append(args, "--set", setValue)
 	}
 
 	if config.DryRun {
@@ -226,17 +241,39 @@ func waitForDeployments(namespace, timeout string) error {
 
 	log.Printf("Found %d deployments: %s", len(deployments), strings.Join(deployments, ", "))
 
-	// Wait for each deployment
+	// Wait for all deployments concurrently so slow Java services don't serialize the wait
+	type result struct {
+		name string
+		err  error
+	}
+	results := make(chan result, len(deployments))
+
 	for _, dep := range deployments {
-		log.Printf("Waiting for deployment %s...", dep)
-		waitCmd := exec.Command("kubectl", "rollout", "status", "deployment/"+dep,
-			"-n", namespace, "--timeout="+timeout)
-		waitCmd.Stdout = os.Stdout
-		waitCmd.Stderr = os.Stderr
-		if err := waitCmd.Run(); err != nil {
-			return fmt.Errorf("deployment %s not ready: %w", dep, err)
+		go func(d string) {
+			log.Printf("Waiting for deployment %s...", d)
+			waitCmd := exec.Command("kubectl", "rollout", "status", "deployment/"+d,
+				"-n", namespace, "--timeout="+timeout)
+			waitCmd.Stdout = os.Stdout
+			waitCmd.Stderr = os.Stderr
+			if err := waitCmd.Run(); err != nil {
+				results <- result{d, fmt.Errorf("deployment %s not ready: %w", d, err)}
+				return
+			}
+			log.Printf("Deployment %s is ready", d)
+			results <- result{d, nil}
+		}(dep)
+	}
+
+	var errs []string
+	for i := 0; i < len(deployments); i++ {
+		r := <-results
+		if r.err != nil {
+			errs = append(errs, r.err.Error())
 		}
-		log.Printf("Deployment %s is ready", dep)
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 
 	log.Printf("All deployments in namespace %s are ready", namespace)
@@ -329,6 +366,141 @@ func ensureNamespace(namespace, releaseName string) error {
 	}
 
 	return nil
+}
+
+// adoptExistingResources uses `helm template` to discover all resources the chart will create,
+// then labels/annotates any that already exist in the cluster without Helm ownership metadata.
+// This prevents "invalid ownership metadata" errors on upgrade --install when resources were
+// left behind after a previous release was purged without deleting the K8s resources.
+func adoptExistingResources(config *Config) error {
+	chartPath := filepath.Join(config.ChartsPath, config.FolderName)
+
+	args := []string{"template", config.ReleaseName, chartPath, "--namespace", config.Namespace}
+	if config.ValuesFile != "" {
+		args = append(args, "-f", config.ValuesFile)
+	}
+	for _, setValue := range config.SetValues {
+		args = append(args, "--set", setValue)
+	}
+
+	log.Printf("Discovering chart resources via: helm %s", strings.Join(args, " "))
+	cmd := exec.Command("helm", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("helm template failed: %w", err)
+	}
+
+	resources := parseHelmTemplateOutput(string(out))
+	if len(resources) == 0 {
+		log.Printf("No resources discovered from chart template")
+		return nil
+	}
+
+	log.Printf("Discovered %d resources from chart template", len(resources))
+	adopted := 0
+	for _, res := range resources {
+		if adoptResource(res, config.ReleaseName, config.Namespace) {
+			adopted++
+		}
+	}
+	if adopted > 0 {
+		log.Printf("Adopted %d pre-existing resources for Helm release %s", adopted, config.ReleaseName)
+	}
+	return nil
+}
+
+// k8sResource represents a Kubernetes resource extracted from helm template output.
+type k8sResource struct {
+	Kind      string
+	Name      string
+	Namespace string
+}
+
+// parseHelmTemplateOutput parses multi-document YAML from `helm template` and
+// extracts the kind, name, and namespace of each resource.
+func parseHelmTemplateOutput(output string) []k8sResource {
+	docs := strings.Split(output, "---")
+	var resources []k8sResource
+
+	for _, doc := range docs {
+		doc = strings.TrimSpace(doc)
+		if doc == "" {
+			continue
+		}
+
+		var kind, name, namespace string
+		inMetadata := false
+
+		for _, line := range strings.Split(doc, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if strings.HasPrefix(trimmed, "kind:") && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				kind = strings.TrimSpace(strings.TrimPrefix(trimmed, "kind:"))
+				continue
+			}
+			if trimmed == "metadata:" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				inMetadata = true
+				continue
+			}
+			if inMetadata && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				inMetadata = false
+			}
+			if inMetadata {
+				if strings.HasPrefix(trimmed, "name:") {
+					indent := len(line) - len(strings.TrimLeft(line, " \t"))
+					if indent <= 4 {
+						name = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "name:")), "\"'")
+					}
+				}
+				if strings.HasPrefix(trimmed, "namespace:") {
+					namespace = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "namespace:")), "\"'")
+				}
+			}
+		}
+		if kind != "" && name != "" {
+			resources = append(resources, k8sResource{Kind: kind, Name: name, Namespace: namespace})
+		}
+	}
+	return resources
+}
+
+// adoptResource labels/annotates a pre-existing K8s resource with Helm ownership metadata.
+// Returns true if the resource existed and was adopted.
+func adoptResource(res k8sResource, releaseName, releaseNamespace string) bool {
+	resourceType := strings.ToLower(res.Kind)
+	ns := res.Namespace
+	if ns == "" {
+		ns = releaseNamespace
+	}
+
+	getArgs := []string{"get", resourceType, res.Name, "-n", ns, "--no-headers", "--ignore-not-found"}
+	out, err := exec.Command("kubectl", getArgs...).Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return false
+	}
+
+	log.Printf("Adopting existing %s/%s (ns=%s) for Helm release %s", res.Kind, res.Name, ns, releaseName)
+
+	labelCmd := exec.Command("kubectl", "label", resourceType, res.Name, "-n", ns,
+		"app.kubernetes.io/managed-by=Helm", "--overwrite")
+	labelCmd.Stdout = os.Stdout
+	labelCmd.Stderr = os.Stderr
+	if err := labelCmd.Run(); err != nil {
+		log.Printf("Warning: failed to label %s/%s: %v", res.Kind, res.Name, err)
+	}
+
+	annotateCmd := exec.Command("kubectl", "annotate", resourceType, res.Name, "-n", ns,
+		fmt.Sprintf("meta.helm.sh/release-name=%s", releaseName),
+		fmt.Sprintf("meta.helm.sh/release-namespace=%s", releaseNamespace),
+		"--overwrite")
+	annotateCmd.Stdout = os.Stdout
+	annotateCmd.Stderr = os.Stderr
+	if err := annotateCmd.Run(); err != nil {
+		log.Printf("Warning: failed to annotate %s/%s: %v", res.Kind, res.Name, err)
+	}
+	return true
 }
 
 // ListAvailableCharts lists all available charts in the charts path

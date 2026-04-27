@@ -45,7 +45,7 @@ sockShop:
   carts:
     replicas: 1
     image: weaveworksdemos/carts:0.4.8
-    javaOpts: "-Xms64m -Xmx128m -XX:PermSize=32m -XX:MaxPermSize=64m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
+    javaOpts: "-Xms96m -Xmx256m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
 
   # Carts DB
   cartsDb:
@@ -61,7 +61,7 @@ sockShop:
   orders:
     replicas: 1
     image: weaveworksdemos/orders:0.4.7
-    javaOpts: "-Xms64m -Xmx128m -XX:PermSize=32m -XX:MaxPermSize=64m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
+    javaOpts: "-Xms96m -Xmx256m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
 
   # Orders DB
   ordersDb:
@@ -77,7 +77,7 @@ sockShop:
   shipping:
     replicas: 1
     image: weaveworksdemos/shipping:0.4.8
-    javaOpts: "-Xms64m -Xmx128m -XX:PermSize=32m -XX:MaxPermSize=64m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
+    javaOpts: "-Xms96m -Xmx256m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom"
 
   # User service
   user:
@@ -158,15 +158,14 @@ chaosExperiments:
 # Tools for Model Context Protocol integration (using public MCP server images)
 mcpTools:
   # Kubernetes MCP Server - exposes K8s + Litmus operations via MCP protocol
+  # Disabled: deployed by agentcert-framework in litmus-exp namespace instead
   kubernetesMcpServer:
-    enabled: true
+    enabled: false
     name: kubernetes-mcp-server
     replicas: 1
     image: quay.io/containers/kubernetes_mcp_server:latest
     port: 8081
     args:
-      - "--transport"
-      - "sse"
       - "--port"
       - "8081"
       - "--stateless"
@@ -189,8 +188,9 @@ mcpTools:
       # nodePort: 31081  # Uncomment if using NodePort
 
   # Prometheus MCP Server - exposes Prometheus queries via MCP protocol
+  # Disabled: deployed by agentcert-framework in litmus-exp namespace instead
   prometheusMcpServer:
-    enabled: true
+    enabled: false
     name: prometheus-mcp-server
     replicas: 1
     image: agentcert/prometheus-mcp-server:latest

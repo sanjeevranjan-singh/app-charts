@@ -1,12 +1,6 @@
 apiVersion: v2
-name: sock-shop-litmus
-description: A Helm chart for deploying Sock-Shop microservices application with LitmusChaos integration
+name: sock-shop
+description: Helm chart for deploying the Sock Shop application
 type: application
-version: 1.0.0
+version: 0.1.0
 appVersion: "1.0.0"
-keywords:
-  - sock-shop
-  - litmus
-  - chaos-engineering
-  - microservices
-  - kubernetes
