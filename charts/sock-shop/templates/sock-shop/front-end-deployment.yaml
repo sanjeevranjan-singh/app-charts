@@ -32,17 +32,24 @@ spec:
           requests:
             cpu: {{ .Values.sockShop.frontEnd.resources.requests.cpu }}
             memory: {{ .Values.sockShop.frontEnd.resources.requests.memory }}
+        startupProbe:
+          httpGet:
+            path: /
+            port: 8079
+          # 60 * 3s = 180s grace for slow startup.
+          failureThreshold: 60
+          periodSeconds: 3
         livenessProbe:
           httpGet:
             path: /
             port: 8079
-          initialDelaySeconds: 300
+          initialDelaySeconds: 0
           periodSeconds: 3
         readinessProbe:
           httpGet:
             path: /
             port: 8079
-          initialDelaySeconds: 30
+          initialDelaySeconds: 0
           periodSeconds: 3
         securityContext:
           capabilities:

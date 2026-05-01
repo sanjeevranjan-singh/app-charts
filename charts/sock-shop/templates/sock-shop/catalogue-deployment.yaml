@@ -29,17 +29,25 @@ spec:
         - containerPort: 80
           protocol: TCP
         resources: {}
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          # 60 * 3s = 180s grace for slow startup; liveness/readiness then
+          # take over without their own long initialDelaySeconds.
+          failureThreshold: 60
+          periodSeconds: 3
         livenessProbe:
           httpGet:
             path: /health
             port: 80
-          initialDelaySeconds: 300
+          initialDelaySeconds: 0
           periodSeconds: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 80
-          initialDelaySeconds: 180
+          initialDelaySeconds: 0
           periodSeconds: 3
         securityContext:
           capabilities:
