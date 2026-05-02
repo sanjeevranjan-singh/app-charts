@@ -25,16 +25,19 @@ spec:
       - image: {{ .Values.sockShop.queueMaster.image }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         name: queue-master
+        env:
+        - name: JAVA_OPTS
+          value: {{ .Values.sockShop.queueMaster.javaOpts | quote }}
         ports:
         - containerPort: 80
           protocol: TCP
         resources:
           requests:
             cpu: 100m
-            memory: 100Mi
+            memory: 256Mi
           limits:
             cpu: 500m
-            memory: 256Mi
+            memory: 512Mi
         startupProbe:
           httpGet:
             path: /health
