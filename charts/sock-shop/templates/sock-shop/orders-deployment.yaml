@@ -46,17 +46,25 @@ spec:
         volumeMounts:
         - mountPath: /tmp
           name: tmp-volume
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          # 60 * 3s = 180s grace for slow JVM startup; once it succeeds,
+          # liveness/readiness take over without long fixed delays.
+          failureThreshold: 60
+          periodSeconds: 3
         livenessProbe:
           httpGet:
             path: /health
             port: 80
-          initialDelaySeconds: 300
+          initialDelaySeconds: 0
           periodSeconds: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 80
-          initialDelaySeconds: 180
+          initialDelaySeconds: 0
           periodSeconds: 3
       volumes:
       - emptyDir:
